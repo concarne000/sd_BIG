@@ -118,7 +118,7 @@ class Script(scripts.Script):
         genlabel = gr.HTML("<br> Will not work if there is no image inserted above.<br>Place a dummy image into the image picker before executing.<br><br>")
         bing_txt = gr.Textbox(label="Search Term", lines=1, elem_id=self.elem_id("bing_txt"))
         iterations_txt = gr.Slider(label="Images to produce", minimum=1, maximum=100, step=1, value=3, elem_id="iterations_txt")
-        aspect_chk = gr.Checkbox(label="Set image output size to width x width * aspectratio", value=True, elem_id="aspect_chk")
+        aspect_chk = gr.Checkbox(label="Aspect correct output based on input", value=True, elem_id="aspect_chk")
         
         return [bing_txt, iterations_txt, aspect_chk]
 
@@ -214,17 +214,16 @@ class Script(scripts.Script):
             if (aspect_chk):
                 
                 aspect = foundimage.width / foundimage.height
-                totalpixels = copy_p.width * copy_p.height
                 
                 aspect = (aspect + 1) / 2
-                
+
                 pixelwidth = copy_p.width
-                
+                                
                 if (aspect < 0.9 or aspect > 1.2):
                     copy_p.width = int(pixelwidth * aspect)
-                    copy_p.width = int(round(pixelwidth / 64) * 64)
+                    copy_p.width = int(round(copy_p.width / 64) * 64)
                     copy_p.height = int(pixelwidth * (1 / aspect))
-                    copy_p.height = int(round(pixelwidth / 64) * 64)
+                    copy_p.height = int(round(copy_p.height / 64) * 64)
 
 
             for k, v in args.items():
