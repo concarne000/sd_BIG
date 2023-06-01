@@ -15,6 +15,8 @@ from modules.processing import Processed, process_images
 from PIL import Image
 from modules.shared import opts, cmd_opts, state
 
+from configparser import ConfigParser
+config = ConfigParser()
 
 def process_string_tag(tag):
     return tag
@@ -105,28 +107,48 @@ def load_prompt_file(file):
     else:
         lines = [x.strip() for x in file.decode('utf8', errors='ignore').split("\n")]
         return None, "\n".join(lines), gr.update(lines=7)
-
-
+        
+        
 class Script(scripts.Script):
     def title(self):
         return "Bing downloader"
 
     def show(self, is_img2img):
         return is_img2img
-        
+         
     def ui(self, is_img2img):
+    
+        #def saveConfig(input):
+        #    config.read('./scripts/bbidconfig.ini')
+        #    config.add_section('main')
+        #    config.set('main', 'iscached', str(input))
+        #    with open('./scripts/bbidconfig.ini', 'w') as configfile:
+        #        config.write(configfile)
+            
+        #config.read('./scripts/bbidconfig.ini')
+        
+        #if config.has_section('main'):
+        #    iscached = config.getboolean('main', 'iscached')
+        #else:
+        iscached = True
+    
         genlabel = gr.HTML("<br> Will not work if there is no image inserted above.<br>Place a dummy image into the image picker before executing.<br><br>")
         bing_txt = gr.Textbox(label="Search Term", lines=1, elem_id=self.elem_id("bing_txt"))
-        iterations_txt = gr.Slider(label="Images to produce", minimum=1, maximum=100, step=1, value=3, elem_id="iterations_txt")
+        iterations_txt = gr.Slider(label="Number of images to download and use", minimum=1, maximum=100, step=1, value=1, elem_id="iterations_txt")
         aspect_chk = gr.Checkbox(label="Aspect correct output based on input", value=True, elem_id="aspect_chk")
+        cache_chk = gr.Checkbox(label="Cache searches and images", value=iscached, elem_id="cache_chk")
+        genlabel2 = gr.HTML("<br> Saved cached images located at ./scripts/searchcache/[searchterm]/<br>")
+        #cache_chk.change(saveConfig, cache_chk)
         
-        return [bing_txt, iterations_txt, aspect_chk]
+        return [bing_txt, iterations_txt, aspect_chk, cache_chk]
 
-    def run(self, p, bing_txt: str, iterations_txt: str, aspect_chk:bool):
+    def run(self, p, bing_txt: str, iterations_txt: str, aspect_chk:bool, cache_chk:bool):
 
         iterations = int(iterations_txt)
 
         bing_txt = bing_txt.lower().strip()
+        bing_txt.translate(dict.fromkeys(map(ord, u"/\&:+:%")))
+        
         texthash = str(hash(bing_txt))
 
         urlopenheader={ 'User-Agent' : 'Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/60.0'}
@@ -135,7 +157,7 @@ class Script(scripts.Script):
         if not os.path.exists("./scripts/searchcache"):
             os.makedirs("./scripts/searchcache")
         
-        if (os.path.isfile("./scripts/searchcache/"+texthash+".searchcache")):
+        if (os.path.isfile("./scripts/searchcache/"+texthash+".searchcache")) and cache_chk:
             print ("ok")
             text_file = open("./scripts/searchcache/"+texthash+".searchcache", "r")
             totallinks = text_file.readlines()
@@ -164,13 +186,15 @@ class Script(scripts.Script):
                 current += 1
                 last = links[-1]
                 totallinks.extend(links)
-
-            text_file = open("./scripts/searchcache/"+texthash+".searchcache", "w")
             
-            for l in totallinks:
-                text_file.write(l + "\n")
+            if cache_chk:
+            
+                text_file = open("./scripts/searchcache/"+texthash+".searchcache", "w")
+                
+                for l in totallinks:
+                    text_file.write(l + "\n")
 
-            text_file.close()          
+                text_file.close()          
 
         p.do_not_save_grid = True
 
@@ -182,17 +206,39 @@ class Script(scripts.Script):
             jobs.append(args)
             job_count += 1           
             
+        n_iter = args.get("n_iter", 1)
+        if n_iter != 1:
+            job_count *= n_iter
+            
         state.job_count = job_count
 
         images = []
         all_prompts = []
         infotexts = []
+        
+        foundimage = None
+        
+        if not os.path.exists("./scripts/searchcache/"+bing_txt) and cache_chk:
+            os.makedirs("./scripts/searchcache/"+bing_txt)          
+                
         for n, args in enumerate(jobs):
             state.job = f"{state.job_no + 1} out of {state.job_count}"
 
             for tries in range(10):                           
             
                 url = totallinks[random.randint(0, len(totallinks) - 1)]
+                
+                filename = posixpath.basename(url).split('?')[0] #Strip GET parameters from filename
+                name, ext = os.path.splitext(filename)
+                name = name[:36].strip()
+                name = name + str(hash(name))[0:4]
+                filename = (name + ext).strip()
+                
+                if os.path.isfile("./scripts/searchcache/"+bing_txt+"/"+filename) and cache_chk:
+                    foundimage = Image.open("./scripts/searchcache/"+bing_txt+"/"+filename)
+                    print ('Loading image from cache')
+                    break
+                
                 print ("downloading " + url)
                 
                 try:
@@ -200,13 +246,18 @@ class Script(scripts.Script):
                     image_data=urllib.request.urlopen(request).read()
                 except:
                     continue
-                
-                
+                            
                 if not imghdr.what(None, image_data):
                     print('Invalid image, not loading')
                     continue
                 
                 foundimage = Image.open( io.BytesIO(image_data))
+                
+                if cache_chk:
+                    imagefile=open(os.path.join("./scripts/searchcache/"+bing_txt+"/", filename),'wb')
+                    imagefile.write(image_data)
+                    imagefile.close()
+                
                 break
 
             copy_p = copy.copy(p)            
@@ -236,5 +287,10 @@ class Script(scripts.Script):
             
             all_prompts += proc.all_prompts
             infotexts += proc.infotexts
-
+            
+            if (state.interrupted):
+                state.job_count = 0
+                jobs.clear()
+                return Processed(p, images, p.seed, "")
+                            
         return Processed(p, images, p.seed, "", all_prompts=all_prompts, infotexts=infotexts)
